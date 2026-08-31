@@ -333,7 +333,11 @@ names provisional.
   slide — skipped by linear navigation (← returns to parent, → continues past it),
   reached by element `link`s, morphing when ids are shared. Authoring: select an
   element → "＋ New state linked from this element" in the Presenting panel. States
-  live adjacent to their parent and render nested in the sidebar.
+  live adjacent to their parent and render nested in the sidebar. In the sidebar,
+  Shift-click selects an inclusive range (separate from the current canvas slide):
+  dropping the selection on a root gap reorders it, while dropping it on an ordinary
+  slide makes the moved slides states of that target. A moved parent carries its
+  states; a state dropped on a root gap is promoted to an ordinary slide.
 - **Layouts**: `doc.layouts` (Slide-shaped templates) + built-ins in model.ts.
   Instantiating KEEPS element ids — slides from the same layout share ids, so
   their chrome morphs across transitions (and re-apply-by-lineage stays

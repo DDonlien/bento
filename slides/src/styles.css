@@ -308,7 +308,28 @@ a.ed-btn { text-decoration: none; }  /* the update block's "What's new" link is 
 }
 .ed-thumb:hover { border-color: #c9d2de; }
 .ed-thumb.active { border-color: var(--accent); }
-.ed-thumb.drop { border-color: var(--blue); }
+.ed-thumb.selected:not(.active) { border-color: var(--blue); }
+.ed-thumb.selected { box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 38%, transparent); }
+.ed-thumb.drag-source { opacity: 0.48; }
+.ed-thumb.drop-state {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 35%, transparent);
+}
+.ed-thumb.drop-state::after {
+  content: attr(data-drop-label);
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: color-mix(in srgb, var(--blue) 82%, transparent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
 .ed-thumb-num {
   position: absolute;
   top: 4px; inset-inline-start: 4px;
@@ -342,7 +363,7 @@ a.ed-btn { text-decoration: none; }  /* the update block's "What's new" link is 
   opacity: 0.72;
   border-style: dashed;
 }
-.ed-thumb-state:hover, .ed-thumb-state.active { opacity: 1; }
+.ed-thumb-state:hover, .ed-thumb-state.active, .ed-thumb-state.selected { opacity: 1; }
 .ed-thumb-state .ed-thumb-num {
   font-size: 9px;
   max-width: 96px;
@@ -1418,6 +1439,8 @@ a.ed-btn { text-decoration: none; }  /* the update block's "What's new" link is 
   transition: opacity 0.12s ease;
 }
 .ed-insertgap:hover { opacity: 1; }
+.ed-sidebar.ed-dragging .ed-insertgap { opacity: 0.28; }
+.ed-sidebar.ed-dragging .ed-insertgap.drop-sort { opacity: 1; }
 .ed-insertgap::before {
   content: '';
   position: absolute;
@@ -1428,6 +1451,12 @@ a.ed-btn { text-decoration: none; }  /* the update block's "What's new" link is 
   margin-top: -1px;
   border-radius: 1px;
   background: var(--blue);
+}
+.ed-sidebar.ed-dragging .ed-insertgap-btn { opacity: 0; }
+.ed-insertgap.drop-sort::before {
+  height: 4px;
+  margin-top: -2px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 22%, transparent);
 }
 .ed-insertgap-btn {
   position: relative;

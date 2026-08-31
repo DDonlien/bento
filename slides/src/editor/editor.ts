@@ -19,6 +19,7 @@ import { renderSlide, renderThumbnail } from '../render'
 import { paletteSignature, resolveThemeRefs } from '../palette'
 import { SlideCanvas } from './canvas'
 import { PropsPanel } from './panels'
+import { moveSlidesToGap, moveSlidesToState } from './slidelist'
 import { startPresentation } from '../present'
 // serializeFile (plain output) is deliberately NOT imported here: every path
 // in this file writes a real file for a person, so all of them must inherit an
@@ -73,6 +74,10 @@ export class Editor {
   /** Name of a deck opened by DROP when no writable handle came with it. */
   private openedAs?: string
   private thumbTimer = 0
+  /** Slide ids carried by the current native sidebar drag. */
+  private draggedSlideIds: string[] | null = null
+  /** A drag must not collapse its multi-selection if the browser follows with click. */
+  private suppressThumbClick = false
   private presenting = false
   private updatesB!: HTMLElement
   private avatarsBox!: HTMLElement
@@ -92,6 +97,7 @@ export class Editor {
     this.wireKeyboard()
     store.on('slides', () => this.rebuildSidebar())
     store.on('current', () => this.highlightSidebar())
+    store.on('slide-selection', () => this.highlightSidebar())
     store.on('doc', () => this.scheduleThumbs())
     store.on('dirty', () => {
       this.dirtyDot.classList.toggle('on', store.dirty)
@@ -362,6 +368,9 @@ export class Editor {
     // main area
     const main = div('ed-main')
     this.sidebar = div('ed-sidebar')
+    this.sidebar.setAttribute('role', 'listbox')
+    this.sidebar.setAttribute('aria-label', t('Slides'))
+    this.sidebar.setAttribute('aria-multiselectable', 'true')
     const canvasWrap = div('ed-canvas-wrap')
     // presenting lives in ONE split pill beside the zoom control: the main
     // half starts the fullscreen show; its menu holds tab-fill and speaker view.
@@ -1549,7 +1558,10 @@ export class Editor {
   private makeThumb(slide: import('../model').Slide, i: number, isState: boolean): HTMLElement {
     const item = div('ed-thumb')
     item.dataset.index = String(i)
-    item.draggable = !isState
+    item.dataset.slideId = slide.id
+    item.dataset.dropLabel = t('State of')
+    item.draggable = !this.store.readOnly
+    item.setAttribute('role', 'option')
     const num = div('ed-thumb-num')
     if (isState) {
       const parentIdx = this.store.doc.slides.findIndex((s) => s.id === slide.stateOf)
@@ -1580,8 +1592,7 @@ export class Editor {
       btn(ICONS.trash, '', (ev) => { ev.stopPropagation(); this.deleteSlide(i) }, t('Delete slide')),
     )
     item.append(num, surface, tools)
-    item.addEventListener('click', () => this.store.goTo(i))
-    if (!isState) this.wireThumbDrag(item, i)
+    this.wireThumbDrag(item, slide.id, !isState)
     return item
   }
 
@@ -1716,44 +1727,124 @@ export class Editor {
     plus.tabIndex = -1
     gap.appendChild(plus)
     gap.addEventListener('click', () => this.openLayoutPicker(gap, { kind: 'insert', at }))
+    this.wireGapDrop(gap, at)
     return gap
   }
 
-  private wireThumbDrag(item: HTMLElement, index: number) {
-    // Select on press, before the browser starts native dragging. Waiting for
-    // click/dragstart leaves Moveable's previous canvas target live while the
-    // pointer crosses the workspace.
+  private wireThumbDrag(item: HTMLElement, slideId: string, acceptsStates: boolean) {
+    const indexOf = () => this.store.doc.slides.findIndex((slide) => slide.id === slideId)
+
+    // Select on press, before the browser starts native dragging. Keep an
+    // already-selected range intact until click, so its first movement can
+    // start a group drag instead of collapsing it to the pressed thumbnail.
     item.addEventListener('mousedown', (ev) => {
       if (ev.button !== 0 || (ev.target instanceof Element && ev.target.closest('.ed-thumb-tools'))) return
       ev.stopPropagation() // keep the canvas Moveable gesture controller out
-      this.store.goTo(index)
+      const index = indexOf()
+      if (index < 0) return
+      if (ev.shiftKey || !this.store.selectedSlideIds.includes(slideId)) {
+        this.store.selectSlide(index, ev.shiftKey)
+      }
+    })
+    item.addEventListener('click', (ev) => {
+      if (this.suppressThumbClick || (ev.target instanceof Element && ev.target.closest('.ed-thumb-tools'))) return
+      const index = indexOf()
+      if (index >= 0) this.store.selectSlide(index, ev.shiftKey)
     })
     item.addEventListener('dragstart', (ev) => {
-      ev.dataTransfer!.setData('text/bento-slide', String(index))
-      ev.dataTransfer!.effectAllowed = 'move'
+      if (this.store.readOnly) { ev.preventDefault(); return }
+      const index = indexOf()
+      if (index < 0) { ev.preventDefault(); return }
+      if (!this.store.selectedSlideIds.includes(slideId)) this.store.selectSlide(index)
+      this.draggedSlideIds = this.store.selectedSlideIds.slice()
+      this.suppressThumbClick = true
+      this.sidebar.classList.add('ed-dragging')
+      this.highlightSidebar()
+      ev.dataTransfer?.setData('text/bento-slides', JSON.stringify(this.draggedSlideIds))
+      if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'move'
     })
+    item.addEventListener('dragend', () => this.finishSlideDrag())
+
+    // State slides can be dragged, but only an ordinary slide can own states.
+    if (!acceptsStates) return
     item.addEventListener('dragover', (ev) => {
+      const ids = this.slideDragIds(ev)
+      if (!moveSlidesToState(this.store.doc.slides, ids, slideId)) return
       ev.preventDefault()
-      item.classList.add('drop')
+      ev.stopPropagation()
+      if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move'
+      item.classList.add('drop-state')
     })
-    item.addEventListener('dragleave', () => item.classList.remove('drop'))
+    item.addEventListener('dragleave', (ev) => {
+      const related = ev.relatedTarget
+      if (!(related instanceof Node) || !item.contains(related)) item.classList.remove('drop-state')
+    })
     item.addEventListener('drop', (ev) => {
+      const next = moveSlidesToState(this.store.doc.slides, this.slideDragIds(ev), slideId)
+      if (!next) return
       ev.preventDefault()
-      item.classList.remove('drop')
-      const from = parseInt(ev.dataTransfer!.getData('text/bento-slide'))
-      if (Number.isNaN(from) || from === index) return
-      this.store.commit(() => {
-        const [moved] = this.store.doc.slides.splice(from, 1)
-        this.store.doc.slides.splice(index, 0, moved)
-      }, 'slides')
+      ev.stopPropagation()
+      this.finishSlideDrag()
+      this.store.commit(() => { this.store.doc.slides = next }, 'slides')
     })
+  }
+
+  private wireGapDrop(gap: HTMLElement, at: number) {
+    gap.addEventListener('dragover', (ev) => {
+      const next = moveSlidesToGap(this.store.doc.slides, this.slideDragIds(ev), at)
+      if (!next) return
+      ev.preventDefault()
+      ev.stopPropagation()
+      if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move'
+      gap.classList.add('drop-sort')
+    })
+    gap.addEventListener('dragleave', (ev) => {
+      const related = ev.relatedTarget
+      if (!(related instanceof Node) || !gap.contains(related)) gap.classList.remove('drop-sort')
+    })
+    gap.addEventListener('drop', (ev) => {
+      const next = moveSlidesToGap(this.store.doc.slides, this.slideDragIds(ev), at)
+      if (!next) return
+      ev.preventDefault()
+      ev.stopPropagation()
+      this.finishSlideDrag()
+      this.store.commit(() => { this.store.doc.slides = next }, 'slides')
+    })
+  }
+
+  private slideDragIds(ev: DragEvent): string[] {
+    if (this.draggedSlideIds?.length) return this.draggedSlideIds
+    try {
+      const parsed = JSON.parse(ev.dataTransfer?.getData('text/bento-slides') ?? '[]')
+      return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []
+    } catch {
+      return []
+    }
+  }
+
+  private finishSlideDrag() {
+    this.draggedSlideIds = null
+    this.sidebar.classList.remove('ed-dragging')
+    this.sidebar.querySelectorAll('.drop-state, .drop-sort, .drag-source').forEach((node) => {
+      node.classList.remove('drop-state', 'drop-sort', 'drag-source')
+    })
+    window.setTimeout(() => { this.suppressThumbClick = false })
   }
 
   private highlightSidebar() {
     let active: HTMLElement | undefined
+    const activeId = this.store.doc.slides[this.store.currentIndex]?.id
+    const selected = new Set(this.store.selectedSlideIds)
     this.sidebar.querySelectorAll<HTMLElement>('.ed-thumb').forEach((n) => {
-      const isActive = Number(n.dataset.index) === this.store.currentIndex
+      const id = n.dataset.slideId
+      const isActive = id === activeId
+      const isSelected = !!id && selected.has(id)
       n.classList.toggle('active', isActive)
+      n.classList.toggle('selected', isSelected)
+      n.classList.toggle('drag-source', !!this.draggedSlideIds && isSelected)
+      n.setAttribute('aria-selected', String(isSelected))
+      if (isActive) n.setAttribute('aria-current', 'page')
+      else n.removeAttribute('aria-current')
       if (isActive) active = n
     })
     active?.scrollIntoView({ block: 'nearest', inline: 'nearest' })

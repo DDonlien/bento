@@ -59,8 +59,9 @@ function slidesHost(store: Store): SyncHost {
     },
 
     clampView(view?: unknown): boolean {
-      const { currentChanged, selectionChanged } = store.reconcileView(view as ViewSnapshot);
+      const { currentChanged, slideSelectionChanged, selectionChanged } = store.reconcileView(view as ViewSnapshot);
       if (currentChanged) store.emit('current');
+      if (slideSelectionChanged) store.emit('slide-selection');
       return selectionChanged;
     },
 

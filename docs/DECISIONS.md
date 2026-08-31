@@ -14,6 +14,21 @@ Decision. Why. Pointers.
 
 ---
 
+## 2026-08-31 — Sidebar gaps reorder; slide cards assign interactive states
+
+**Decision.** Sidebar Shift-click owns a slide selection distinct from the canvas's
+current slide. Dropping that selection on a root-level gap reorders it as one block;
+dropping it on an ordinary slide assigns every moved slide to that slide via
+`stateOf`. A moved parent carries its existing states, while a state moved alone to
+a root gap becomes an ordinary slide. Nested state families remain unsupported.
+
+**Why.** One drag target cannot communicate both ordering and page-to-page
+ownership. Separate gap/card targets make the result visible before drop and keep
+state families adjacent. The pure transformations and DOM-free regression cases
+live in `slides/src/editor/slidelist.ts` and `scripts/test-slide-store.ts`.
+
+---
+
 ## 2026-08-19 — Cross-app embedding: static render + source, never a second renderer
 
 **Decision.** One block/element shape, `bento/embed`, shared by every app in both
