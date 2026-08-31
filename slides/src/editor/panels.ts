@@ -16,6 +16,7 @@ import { FONT_CHOICES, firstFamily, injectFonts } from '../fonts'
 import { ICONS } from '../icons'
 import { t } from '../i18n'
 import { lsJson, lsSet } from '../../../kernel/src/storage.ts'
+import { moveSlidesToGap, moveSlidesToState, pruneSections } from './slidelist'
 
 // Hover help for panel rows, keyed by the RAW English label (translated at
 // render). A missing entry means no tooltip — better silence than an echo.
@@ -343,11 +344,24 @@ export class PropsPanel {
       if (slide.stateOf === s.id) o.selected = true
       stateSel.appendChild(o)
     })
-    stateSel.addEventListener('change', () =>
-      this.edit(() => {
-        this.store.slide.stateOf = stateSel.value || undefined
-        this.store.emit('slides')
-      }, true))
+    stateSel.addEventListener('change', () => {
+      const slides = this.store.doc.slides
+      let next: Slide[] | null = null
+      if (stateSel.value) {
+        next = moveSlidesToState(slides, [slide.id], stateSel.value)
+      } else if (slide.stateOf) {
+        const parent = slides.find((candidate) => candidate.id === slide.stateOf)
+        const parentIndex = parent ? slides.findIndex((candidate) => candidate.id === parent.id) : -1
+        let at = parentIndex + 1
+        while (parent && slides[at]?.stateOf === parent.id) at++
+        next = moveSlidesToGap(slides, [slide.id], at, parent?.sectionId)
+      }
+      if (!next) return
+      this.store.commit(() => {
+        this.store.doc.slides = next!
+        pruneSections(this.store.doc)
+      }, 'slides')
+    })
     stateSel.title = t('A state is hidden from arrow-key flow — viewers reach it by clicking a linked element. Shared element ids morph between states.')
     this.row('State of', stateSel)
 
@@ -412,7 +426,7 @@ export class PropsPanel {
       this.edit(() => {
         const doc = this.store.doc
         const copy: Slide = JSON.parse(JSON.stringify(this.store.slide))
-        doc.layouts = [...(doc.layouts ?? []), { ...copy, id: uid('layout'), name, stateOf: undefined, notes: '' }]
+        doc.layouts = [...(doc.layouts ?? []), { ...copy, id: uid('layout'), name, sectionId: undefined, stateOf: undefined, notes: '' }]
       }, true)
     })
     this.host.appendChild(saveLy)
@@ -868,6 +882,7 @@ export class PropsPanel {
     const clone = JSON.parse(JSON.stringify(src)) as typeof src
     clone.id = uid('slide')
     clone.stateOf = src.stateOf ?? src.id // states of a state share one parent
+    delete clone.sectionId // states inherit the root's outline section
     clone.name = `${src.name ?? 'state'} ${this.store.doc.slides.filter((s) => s.stateOf === clone.stateOf).length + 2}`
     clone.transition = 'morph'
     delete (clone as any).hover // inherit nothing implicit; user can re-enable

@@ -10,8 +10,9 @@
 // a typo just means the styling does not apply.
 
 export const MODEL_KEYS = {
-    "doc": ["assets", "blobs", "collab", "docId", "fonts", "format", "layouts", "meta", "modified", "present", "readonly", "size", "slides", "template", "theme", "title", "version"],
-    "slide": ["background", "comments", "elements", "hidden", "hover", "id", "name", "notes", "stateOf", "themeRefs", "transition"],
+    "doc": ["assets", "blobs", "collab", "docId", "fonts", "format", "layouts", "meta", "modified", "present", "readonly", "sections", "size", "slides", "template", "theme", "title", "version"],
+    "section": ["id", "name"],
+    "slide": ["background", "comments", "elements", "hidden", "hover", "id", "name", "notes", "sectionId", "stateOf", "themeRefs", "transition"],
     "comment": ["at", "author", "elementId", "id", "replies", "resolved", "text", "x", "y"],
     "element": {
       "text": ["align", "backdropFilter", "blend", "blur", "color", "colorGradient", "fontFamily", "fontSize", "fontWeight", "fx", "group", "groupId", "h", "html", "id", "letterSpacing", "lineHeight", "link", "morphId", "opacity", "placeholder", "role", "rotation", "shadow", "showOnHover", "textStroke", "themeRefs", "type", "valign", "w", "x", "y"],

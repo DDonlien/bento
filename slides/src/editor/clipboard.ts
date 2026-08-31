@@ -176,14 +176,16 @@ export function insertElements(payload: ClipPayload, doc: BentoDoc, slide: Slide
   return els
 }
 
-/** Insert pasted slides at `at` with fresh slide ids; merge assets + fonts. */
-export function insertSlides(payload: ClipPayload, doc: BentoDoc, at: number): Slide[] {
+/** Insert pasted slides at `at` with fresh ids, in the destination section. */
+export function insertSlides(payload: ClipPayload, doc: BentoDoc, at: number, sectionId?: string): Slide[] {
   const remap = mergeAssets(payload, doc)
   mergeFonts(payload, doc, remap)
   const slides: Slide[] = (payload.slides ?? []).map((s) => {
     const copy = JSON.parse(JSON.stringify(s)) as Slide
     copy.id = uid('slide')
     if (copy.stateOf) delete copy.stateOf // a pasted state becomes a normal slide
+    if (sectionId) copy.sectionId = sectionId
+    else delete copy.sectionId // source section metadata is not part of a slide clip
     rewriteRefs(copy.elements, remap)
     return copy
   })

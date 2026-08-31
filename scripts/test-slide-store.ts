@@ -5,7 +5,10 @@
 
 import { emptySlide, newDoc, defaultText } from '../slides/src/model.ts'
 import { Store } from '../slides/src/store.ts'
-import { moveSlidesToGap, moveSlidesToState } from '../slides/src/editor/slidelist.ts'
+import {
+  moveSectionBefore, moveSectionToGap, moveSlidesToGap, moveSlidesToSection, moveSlidesToState,
+  pruneSections, removeSectionFromSlides, sectionIdForSlide, startSectionAtSlide,
+} from '../slides/src/editor/slidelist.ts'
 
 let checks = 0
 let failures = 0
@@ -25,16 +28,17 @@ function makeStore(ids: string[]): Store {
   return new Store(doc)
 }
 
-function makeSlides(spec: Array<[id: string, stateOf?: string]>) {
-  return spec.map(([id, stateOf]) => {
+function makeSlides(spec: Array<[id: string, stateOf?: string, sectionId?: string]>) {
+  return spec.map(([id, stateOf, sectionId]) => {
     const slide = emptySlide({ id, name: id })
     if (stateOf) slide.stateOf = stateOf
+    if (sectionId) slide.sectionId = sectionId
     return slide
   })
 }
 
 function arrangement(slides: ReturnType<typeof makeSlides> | null): string {
-  return slides?.map((slide) => `${slide.id}:${slide.stateOf ?? '-'}`).join(',') ?? 'null'
+  return slides?.map((slide) => `${slide.id}:${slide.stateOf ?? '-'}${slide.sectionId ? `@${slide.sectionId}` : ''}`).join(',') ?? 'null'
 }
 
 function observeDoc(store: Store) {
@@ -248,6 +252,68 @@ console.log('\nsidebar slide moves')
   ok(arrangement(moveSlidesToState(slides, ['state'], 'target')) === 'parent:-,target:-,state:target,tail:-', 'a state can be re-parented by dropping it on another ordinary slide')
   ok(moveSlidesToState(slides, ['target'], 'target') == null, 'a slide cannot be dropped onto itself as a state')
   ok(moveSlidesToState(slides, ['tail'], 'state') == null, 'an interactive state cannot own nested states')
+}
+
+console.log('\nsidebar sections')
+
+{
+  const slides = makeSlides([['a'], ['a1', 'a'], ['b'], ['c']])
+  ok(arrangement(startSectionAtSlide(slides, 'b', 's1')) === 'a:-,a1:a,b:-@s1,c:-@s1',
+    'starting a section takes the rest of the current unsectioned run')
+  ok(arrangement(startSectionAtSlide(slides, 'a1', 's1')) === 'a:-@s1,a1:a,b:-@s1,c:-@s1',
+    'starting a section from a state resolves to its root parent')
+}
+
+{
+  const slides = makeSlides([['a', undefined, 'old'], ['a1', 'a'], ['b', undefined, 'old'], ['c', undefined, 'old'], ['d', undefined, 'next']])
+  ok(arrangement(startSectionAtSlide(slides, 'b', 'new')) === 'a:-@old,a1:a,b:-@new,c:-@new,d:-@next',
+    'starting inside an existing section splits at one boundary without leaving a disconnected old section')
+}
+
+{
+  const slides = makeSlides([
+    ['a', undefined, 'one'], ['a1', 'a'], ['b', undefined, 'one'],
+    ['c', undefined, 'two'], ['c1', 'c'], ['d', undefined, 'two'],
+  ])
+  ok(arrangement(moveSlidesToGap(slides, ['b'], 5, 'two')) === 'a:-@one,a1:a,c:-@two,c1:c,b:-@two,d:-@two',
+    'dropping into a section gap reorders and changes section membership in one move')
+  ok(arrangement(moveSlidesToGap(slides, ['a1'], 6, 'two')) === 'a:-@one,b:-@one,c:-@two,c1:c,d:-@two,a1:-@two',
+    'a state dropped into a section gap is promoted and joins that section')
+  ok(sectionIdForSlide(slides, 'c1') === 'two', 'a state inherits its parent section without storing sectionId itself')
+}
+
+{
+  const slides = makeSlides([
+    ['a', undefined, 'one'], ['b', undefined, 'one'],
+    ['c', undefined, 'two'], ['c1', 'c'], ['d', undefined, 'two'],
+  ])
+  ok(arrangement(moveSlidesToSection(slides, ['a'], 'two')) === 'b:-@one,c:-@two,c1:c,d:-@two,a:-@two',
+    'dropping slides on a section header appends them to that section')
+  ok(arrangement(moveSlidesToState(slides, ['b'], 'c')) === 'a:-@one,c:-@two,c1:c,b:c,d:-@two',
+    'making a slide a state removes its own section and places it with the target family')
+}
+
+{
+  const slides = makeSlides([
+    ['a', undefined, 'one'], ['a1', 'a'], ['b', undefined, 'one'],
+    ['c', undefined, 'two'], ['d', undefined, 'two'], ['tail'],
+  ])
+  ok(arrangement(moveSectionBefore(slides, 'two', 'one')) === 'c:-@two,d:-@two,a:-@one,a1:a,b:-@one,tail:-',
+    'dragging a section header before another moves every slide family as one block')
+  ok(arrangement(moveSectionToGap(slides, 'one', slides.length)) === 'c:-@two,d:-@two,tail:-,a:-@one,a1:a,b:-@one',
+    'a section can move to the final root gap without losing its state children')
+}
+
+{
+  const doc = newDoc()
+  doc.slides = makeSlides([['a', undefined, 'one'], ['b', undefined, 'two']])
+  doc.sections = [{ id: 'one', name: 'One' }, { id: 'two', name: 'Two' }]
+  doc.slides = removeSectionFromSlides(doc.slides, 'one')
+  doc.sections = doc.sections.filter((section) => section.id !== 'one')
+  ok(arrangement(doc.slides) === 'a:-,b:-@two', 'removing a section keeps its slides in place and only clears membership')
+  doc.slides = moveSlidesToGap(doc.slides, ['b'], 0)!
+  pruneSections(doc)
+  ok(!doc.sections, 'moving the last slide out of a section prunes its unused metadata')
 }
 
 console.log(`\n${checks - failures}/${checks} checks passed`)

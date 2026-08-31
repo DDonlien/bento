@@ -14,6 +14,29 @@ Decision. Why. Pointers.
 
 ---
 
+## 2026-08-31 — Sections are outline data; disclosure is viewer state
+
+**Decision.** bento/slides stores named outline groups in optional
+`doc.sections[]`; ordinary slides carry `sectionId`, while interactive states
+inherit their parent's section and never carry independent membership. Section
+order is derived from `slides[]`. Collapsed section ids and collapsed state-parent
+ids live only in the editor instance — no document write, dirty flag, sync op, or
+undo entry.
+
+**Interaction.** A root gap both reorders and adopts that gap's section; a slide
+card still assigns `stateOf`; a section header accepts slides at its end and can
+itself be dragged to move the whole section. Shift-selected slides use the same
+three targets as one block. Removing a section clears membership without moving
+slides.
+
+**Why.** Presentation order must keep one authority, and an editing preference
+must not travel with a file. The additive fields keep old decks unsectioned and
+readable. Pure transformations and regression cases live in
+`slides/src/editor/slidelist.ts` and `scripts/test-slide-store.ts`; format details
+are in `docs/format.md`.
+
+---
+
 ## 2026-08-31 — Sidebar gaps reorder; slide cards assign interactive states
 
 **Decision.** Sidebar Shift-click owns a slide selection distinct from the canvas's

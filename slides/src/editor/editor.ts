@@ -19,7 +19,10 @@ import { renderSlide, renderThumbnail } from '../render'
 import { paletteSignature, resolveThemeRefs } from '../palette'
 import { SlideCanvas } from './canvas'
 import { PropsPanel } from './panels'
-import { moveSlidesToGap, moveSlidesToState } from './slidelist'
+import {
+  moveSectionBefore, moveSectionToGap, moveSlidesToGap, moveSlidesToSection, moveSlidesToState,
+  pruneSections, removeSectionFromSlides, rootSlideFor, sectionIdForSlide, startSectionAtSlide,
+} from './slidelist'
 import { startPresentation } from '../present'
 // serializeFile (plain output) is deliberately NOT imported here: every path
 // in this file writes a real file for a person, so all of them must inherit an
@@ -74,10 +77,18 @@ export class Editor {
   /** Name of a deck opened by DROP when no writable handle came with it. */
   private openedAs?: string
   private thumbTimer = 0
+  /** Last structure rendered into the outline; catches remote property edits
+   *  (`sectionId`, `stateOf`, section names) that arrive as ordinary doc sets. */
+  private outlineSignature = ''
   /** Slide ids carried by the current native sidebar drag. */
   private draggedSlideIds: string[] | null = null
+  /** Section id carried when a section header, rather than slides, is dragged. */
+  private draggedSectionId: string | null = null
   /** A drag must not collapse its multi-selection if the browser follows with click. */
   private suppressThumbClick = false
+  /** Outline-only disclosure state. Never serialized, dirtied, or added to undo. */
+  private collapsedSectionIds = new Set<string>()
+  private collapsedStateParentIds = new Set<string>()
   private presenting = false
   private updatesB!: HTMLElement
   private avatarsBox!: HTMLElement
@@ -96,7 +107,7 @@ export class Editor {
     this.build()
     this.wireKeyboard()
     store.on('slides', () => this.rebuildSidebar())
-    store.on('current', () => this.highlightSidebar())
+    store.on('current', () => this.onCurrentSlideChanged())
     store.on('slide-selection', () => this.highlightSidebar())
     store.on('doc', () => this.scheduleThumbs())
     store.on('dirty', () => {
@@ -1591,7 +1602,30 @@ export class Editor {
       btn(ICONS.copy, '', (ev) => { ev.stopPropagation(); this.duplicateSlide(i) }, t('Duplicate slide')),
       btn(ICONS.trash, '', (ev) => { ev.stopPropagation(); this.deleteSlide(i) }, t('Delete slide')),
     )
-    item.append(num, surface, tools)
+    item.append(num, surface)
+    if (!isState) {
+      const stateCount = this.store.doc.slides.filter((candidate) => candidate.stateOf === slide.id).length
+      if (stateCount) {
+        const collapsed = this.collapsedStateParentIds.has(slide.id)
+        const toggle = document.createElement('button')
+        toggle.className = 'ed-state-toggle ed-outline-control'
+        toggle.type = 'button'
+        toggle.draggable = false
+        toggle.setAttribute('aria-expanded', String(!collapsed))
+        toggle.setAttribute('aria-label', collapsed ? t('Expand states') : t('Collapse states'))
+        toggle.title = collapsed ? t('Expand states') : t('Collapse states')
+        toggle.textContent = `${collapsed ? '▸' : '▾'} ${stateCount === 1 ? t('1 state') : t('{n} states', { n: stateCount })}`
+        toggle.addEventListener('mousedown', (ev) => { ev.stopPropagation() })
+        toggle.addEventListener('click', (ev) => {
+          ev.stopPropagation()
+          if (collapsed) this.collapsedStateParentIds.delete(slide.id)
+          else this.collapsedStateParentIds.add(slide.id)
+          this.rebuildSidebar()
+        })
+        item.appendChild(toggle)
+      }
+    }
+    item.appendChild(tools)
     this.wireThumbDrag(item, slide.id, !isState)
     return item
   }
@@ -1601,25 +1635,168 @@ export class Editor {
     return this.store.doc.slides.slice(0, i + 1).filter((s) => paginates(s, this.store.doc)).length
   }
 
+  private sectionName(sectionId: string): string {
+    const sections = Array.isArray(this.store.doc.sections) ? this.store.doc.sections : []
+    return sections.find((section) => section.id === sectionId)?.name?.trim()
+      || t('Untitled section')
+  }
+
+  private makeSectionHeader(sectionId: string): HTMLElement {
+    const collapsed = this.collapsedSectionIds.has(sectionId)
+    const count = this.store.doc.slides.filter((slide) => !slide.stateOf && slide.sectionId === sectionId).length
+    const header = div('ed-slide-section')
+    header.dataset.sectionId = sectionId
+    header.dataset.dropLabel = t('Move to section')
+    header.draggable = !this.store.readOnly
+    header.setAttribute('role', 'group')
+    header.setAttribute('aria-label', this.sectionName(sectionId))
+
+    const toggle = document.createElement('button')
+    toggle.type = 'button'
+    toggle.className = 'ed-section-toggle ed-outline-control'
+    toggle.textContent = collapsed ? '▸' : '▾'
+    toggle.title = collapsed ? t('Expand section') : t('Collapse section')
+    toggle.setAttribute('aria-label', toggle.title)
+    toggle.setAttribute('aria-expanded', String(!collapsed))
+    toggle.addEventListener('mousedown', (ev) => { ev.stopPropagation() })
+    toggle.addEventListener('click', (ev) => {
+      ev.stopPropagation()
+      if (collapsed) this.collapsedSectionIds.delete(sectionId)
+      else this.collapsedSectionIds.add(sectionId)
+      this.rebuildSidebar()
+    })
+
+    const label = div('ed-section-name')
+    label.textContent = this.sectionName(sectionId)
+    label.title = t('Double-click to rename section')
+    label.addEventListener('dblclick', (ev) => {
+      ev.stopPropagation()
+      this.renameSection(sectionId)
+    })
+
+    const total = div('ed-section-count')
+    total.textContent = count === 1 ? t('1 slide') : t('{n} slides', { n: count })
+
+    const tools = div('ed-section-tools ed-outline-control')
+    const rename = btn('', '✎', (ev) => { ev.stopPropagation(); this.renameSection(sectionId) }, t('Rename section'))
+    const remove = btn(ICONS.trash, '', (ev) => { ev.stopPropagation(); this.removeSection(sectionId) }, t('Remove section'))
+    for (const control of [rename, remove]) {
+      control.classList.add('ed-outline-control')
+      control.addEventListener('mousedown', (ev) => { ev.stopPropagation() })
+    }
+    tools.append(rename, remove)
+    header.append(toggle, label, total, tools)
+    this.wireSectionHeaderDrag(header, sectionId)
+    return header
+  }
+
+  private renameSection(sectionId: string) {
+    const current = this.sectionName(sectionId)
+    const name = window.prompt(t('Section name'), current)?.trim()
+    if (!name || name === current) return
+    this.store.commit(() => {
+      const sections = Array.isArray(this.store.doc.sections) ? this.store.doc.sections : []
+      const existing = sections.find((section) => section.id === sectionId)
+      if (existing) existing.name = name
+      else this.store.doc.sections = [...sections, { id: sectionId, name }]
+    }, 'slides')
+  }
+
+  private removeSection(sectionId: string) {
+    const name = this.sectionName(sectionId)
+    if (!window.confirm(t('Remove section “{name}”? Slides stay in place.', { name }))) return
+    this.collapsedSectionIds.delete(sectionId)
+    this.store.commit(() => {
+      this.store.doc.slides = removeSectionFromSlides(this.store.doc.slides, sectionId)
+      const sections = (Array.isArray(this.store.doc.sections) ? this.store.doc.sections : [])
+        .filter((section) => section.id !== sectionId)
+      if (sections.length) this.store.doc.sections = sections
+      else delete this.store.doc.sections
+    }, 'slides')
+  }
+
+  private addSection() {
+    const current = this.store.doc.slides[this.store.currentIndex]
+    const root = current && rootSlideFor(this.store.doc.slides, current.id)
+    if (!root) return
+    const name = window.prompt(t('Section name'), t('Untitled section'))?.trim()
+    if (!name) return
+    const sectionId = uid('section')
+    const next = startSectionAtSlide(this.store.doc.slides, root.id, sectionId)
+    if (!next) return
+    this.store.commit(() => {
+      this.store.doc.slides = next
+      const sections = Array.isArray(this.store.doc.sections) ? this.store.doc.sections : []
+      this.store.doc.sections = [...sections, { id: sectionId, name }]
+      pruneSections(this.store.doc)
+    }, 'slides')
+  }
+
+  /** Navigating into a collapsed group reveals the destination. Toggling a
+   *  disclosure itself does not navigate, select, dirty, or enter history. */
+  private onCurrentSlideChanged() {
+    const current = this.store.doc.slides[this.store.currentIndex]
+    if (!current) return this.highlightSidebar()
+    const root = rootSlideFor(this.store.doc.slides, current.id)
+    let changed = false
+    if (current.stateOf && this.collapsedStateParentIds.delete(current.stateOf)) changed = true
+    if (root?.sectionId && this.collapsedSectionIds.delete(root.sectionId)) changed = true
+    if (changed) this.rebuildSidebar()
+    else this.highlightSidebar()
+  }
+
+  private currentOutlineSignature(): string {
+    return JSON.stringify({
+      sections: this.store.doc.sections ?? [],
+      slides: this.store.doc.slides.map((slide) => [slide.id, slide.stateOf, slide.sectionId]),
+    })
+  }
+
   private rebuildSidebar() {
-    // States sit in doc order right after their parent and render nested —
-    // smaller, indented, dimmed — so the structure reads at a glance.
+    // Sections group root slides; states inherit their parent's group and can
+    // fold independently. Both disclosure sets are editor view state only.
     const scroll = this.sidebar.scrollTop
     this.sidebar.innerHTML = ''
     const slides = this.store.doc.slides
+    this.outlineSignature = this.currentOutlineSignature()
+    const liveSections = new Set(slides.filter((slide) => !slide.stateOf && slide.sectionId).map((slide) => slide.sectionId!))
+    const liveParents = new Set(slides.filter((slide) => slide.stateOf).map((slide) => slide.stateOf!))
+    for (const id of this.collapsedSectionIds) if (!liveSections.has(id)) this.collapsedSectionIds.delete(id)
+    for (const id of this.collapsedStateParentIds) if (!liveParents.has(id)) this.collapsedStateParentIds.delete(id)
+
+    let previousSectionId: string | undefined
+    let sawRoot = false
     slides.forEach((slide, i) => {
-      // hover gap = insert here; never between a parent and its states
-      if (!slide.stateOf) this.sidebar.appendChild(this.insertGap(i))
+      if (!slide.stateOf) {
+        const groupChanged = !sawRoot || slide.sectionId !== previousSectionId
+        if (groupChanged) {
+          if (sawRoot) this.sidebar.appendChild(this.insertGap(i, previousSectionId, true))
+          previousSectionId = slide.sectionId
+          sawRoot = true
+          if (slide.sectionId) this.sidebar.appendChild(this.makeSectionHeader(slide.sectionId))
+        }
+        if (slide.sectionId && this.collapsedSectionIds.has(slide.sectionId)) return
+        // hover gap = insert here; never between a parent and its states
+        this.sidebar.appendChild(this.insertGap(i, slide.sectionId, !slide.sectionId))
+      } else {
+        const inheritedSectionId = sectionIdForSlide(slides, slide.id)
+        if (inheritedSectionId && this.collapsedSectionIds.has(inheritedSectionId)) return
+        if (this.collapsedStateParentIds.has(slide.stateOf)) return
+      }
       const item = this.makeThumb(slide, i, !!slide.stateOf)
       if (slide.stateOf) item.classList.add('ed-thumb-state')
       if (slide.hidden) item.classList.add('ed-thumb-hidden')
       this.sidebar.appendChild(item)
     })
-    this.sidebar.appendChild(this.insertGap(slides.length))
+    if (sawRoot) this.sidebar.appendChild(this.insertGap(slides.length, previousSectionId, true))
+    const actions = div('ed-sidebar-actions')
     const add = btn(ICONS.plus, t('New slide'), () => this.openLayoutPicker(add))
     add.classList.add('ed-add-slide')
     add.title = t('New slide from a layout')
-    this.sidebar.appendChild(add)
+    const addSection = btn('<b>§</b>', t('New section'), () => this.addSection(), t('Start a section at the current slide'))
+    addSection.classList.add('ed-add-section')
+    actions.append(add, addSection)
+    this.sidebar.appendChild(actions)
     this.sidebar.scrollTop = scroll
     this.highlightSidebar()
   }
@@ -1630,8 +1807,13 @@ export class Editor {
    *  insert-gaps (both insert at a position), and Apply-to-current-slide. */
   private openLayoutPicker(
     anchor: HTMLElement,
-    action: { kind: 'insert'; at: number } | { kind: 'apply' } = { kind: 'insert', at: this.store.currentIndex + 1 },
+    action?: { kind: 'insert'; at: number; sectionId?: string } | { kind: 'apply' },
   ) {
+    action ??= {
+      kind: 'insert',
+      at: this.store.currentIndex + 1,
+      sectionId: sectionIdForSlide(this.store.doc.slides, this.store.slide.id),
+    }
     document.querySelector('.ed-layoutpick')?.remove()
     const pick = div('ed-layoutpick')
     const doc = this.store.doc
@@ -1655,7 +1837,7 @@ export class Editor {
         item.appendChild(name)
         item.addEventListener('click', () => {
           pick.remove()
-          if (action.kind === 'insert') this.insertSlideFromLayout(ly, action.at)
+          if (action.kind === 'insert') this.insertSlideFromLayout(ly, action.at, action.sectionId)
           else this.applyLayoutToCurrent(ly)
         })
         if (custom) {
@@ -1697,8 +1879,9 @@ export class Editor {
     setTimeout(() => document.addEventListener('pointerdown', close, true))
   }
 
-  private insertSlideFromLayout(layout: Slide, at: number) {
+  private insertSlideFromLayout(layout: Slide, at: number, sectionId?: string) {
     const slide = instantiateLayout(layout)
+    if (sectionId) slide.sectionId = sectionId
     this.store.commit(() => {
       this.store.doc.slides.splice(at, 0, slide)
     }, 'slides')
@@ -1718,7 +1901,7 @@ export class Editor {
   }
 
   /** Slim hover strip between thumbnails — click inserts a blank slide there. */
-  private insertGap(at: number): HTMLElement {
+  private insertGap(at: number, sectionId?: string, acceptsSection = false): HTMLElement {
     const gap = div('ed-insertgap')
     gap.title = t('Insert slide here')
     const plus = document.createElement('button')
@@ -1726,8 +1909,8 @@ export class Editor {
     plus.textContent = '＋'
     plus.tabIndex = -1
     gap.appendChild(plus)
-    gap.addEventListener('click', () => this.openLayoutPicker(gap, { kind: 'insert', at }))
-    this.wireGapDrop(gap, at)
+    gap.addEventListener('click', () => this.openLayoutPicker(gap, { kind: 'insert', at, sectionId }))
+    this.wireGapDrop(gap, at, sectionId, acceptsSection)
     return gap
   }
 
@@ -1738,7 +1921,7 @@ export class Editor {
     // already-selected range intact until click, so its first movement can
     // start a group drag instead of collapsing it to the pressed thumbnail.
     item.addEventListener('mousedown', (ev) => {
-      if (ev.button !== 0 || (ev.target instanceof Element && ev.target.closest('.ed-thumb-tools'))) return
+      if (ev.button !== 0 || (ev.target instanceof Element && ev.target.closest('.ed-thumb-tools, .ed-outline-control'))) return
       ev.stopPropagation() // keep the canvas Moveable gesture controller out
       const index = indexOf()
       if (index < 0) return
@@ -1747,7 +1930,7 @@ export class Editor {
       }
     })
     item.addEventListener('click', (ev) => {
-      if (this.suppressThumbClick || (ev.target instanceof Element && ev.target.closest('.ed-thumb-tools'))) return
+      if (this.suppressThumbClick || (ev.target instanceof Element && ev.target.closest('.ed-thumb-tools, .ed-outline-control'))) return
       const index = indexOf()
       if (index >= 0) this.store.selectSlide(index, ev.shiftKey)
     })
@@ -1757,13 +1940,14 @@ export class Editor {
       if (index < 0) { ev.preventDefault(); return }
       if (!this.store.selectedSlideIds.includes(slideId)) this.store.selectSlide(index)
       this.draggedSlideIds = this.store.selectedSlideIds.slice()
+      this.draggedSectionId = null
       this.suppressThumbClick = true
       this.sidebar.classList.add('ed-dragging')
       this.highlightSidebar()
       ev.dataTransfer?.setData('text/bento-slides', JSON.stringify(this.draggedSlideIds))
       if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'move'
     })
-    item.addEventListener('dragend', () => this.finishSlideDrag())
+    item.addEventListener('dragend', () => this.finishSidebarDrag())
 
     // State slides can be dragged, but only an ordinary slide can own states.
     if (!acceptsStates) return
@@ -1784,14 +1968,66 @@ export class Editor {
       if (!next) return
       ev.preventDefault()
       ev.stopPropagation()
-      this.finishSlideDrag()
-      this.store.commit(() => { this.store.doc.slides = next }, 'slides')
+      this.finishSidebarDrag()
+      this.store.commit(() => {
+        this.store.doc.slides = next
+        pruneSections(this.store.doc)
+      }, 'slides')
     })
   }
 
-  private wireGapDrop(gap: HTMLElement, at: number) {
+  private wireSectionHeaderDrag(header: HTMLElement, sectionId: string) {
+    header.addEventListener('dragstart', (ev) => {
+      if (this.store.readOnly || (ev.target instanceof Element && ev.target.closest('.ed-outline-control'))) {
+        ev.preventDefault()
+        return
+      }
+      this.draggedSlideIds = null
+      this.draggedSectionId = sectionId
+      this.sidebar.classList.add('ed-dragging', 'ed-dragging-section')
+      header.classList.add('drag-source')
+      ev.dataTransfer?.setData('text/bento-section', sectionId)
+      if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'move'
+    })
+    header.addEventListener('dragend', () => this.finishSidebarDrag())
+    header.addEventListener('dragover', (ev) => {
+      const movedSectionId = this.sectionDragId(ev)
+      const next = movedSectionId
+        ? moveSectionBefore(this.store.doc.slides, movedSectionId, sectionId)
+        : moveSlidesToSection(this.store.doc.slides, this.slideDragIds(ev), sectionId)
+      if (!next) return
+      ev.preventDefault()
+      ev.stopPropagation()
+      if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move'
+      header.dataset.dropLabel = movedSectionId ? t('Move section') : t('Move to section')
+      header.classList.add('drop-section')
+    })
+    header.addEventListener('dragleave', (ev) => {
+      const related = ev.relatedTarget
+      if (!(related instanceof Node) || !header.contains(related)) header.classList.remove('drop-section')
+    })
+    header.addEventListener('drop', (ev) => {
+      const movedSectionId = this.sectionDragId(ev)
+      const next = movedSectionId
+        ? moveSectionBefore(this.store.doc.slides, movedSectionId, sectionId)
+        : moveSlidesToSection(this.store.doc.slides, this.slideDragIds(ev), sectionId)
+      if (!next) return
+      ev.preventDefault()
+      ev.stopPropagation()
+      this.finishSidebarDrag()
+      this.store.commit(() => {
+        this.store.doc.slides = next
+        pruneSections(this.store.doc)
+      }, 'slides')
+    })
+  }
+
+  private wireGapDrop(gap: HTMLElement, at: number, sectionId?: string, acceptsSection = false) {
     gap.addEventListener('dragover', (ev) => {
-      const next = moveSlidesToGap(this.store.doc.slides, this.slideDragIds(ev), at)
+      const movedSectionId = this.sectionDragId(ev)
+      const next = movedSectionId
+        ? (acceptsSection ? moveSectionToGap(this.store.doc.slides, movedSectionId, at) : null)
+        : moveSlidesToGap(this.store.doc.slides, this.slideDragIds(ev), at, sectionId)
       if (!next) return
       ev.preventDefault()
       ev.stopPropagation()
@@ -1803,12 +2039,18 @@ export class Editor {
       if (!(related instanceof Node) || !gap.contains(related)) gap.classList.remove('drop-sort')
     })
     gap.addEventListener('drop', (ev) => {
-      const next = moveSlidesToGap(this.store.doc.slides, this.slideDragIds(ev), at)
+      const movedSectionId = this.sectionDragId(ev)
+      const next = movedSectionId
+        ? (acceptsSection ? moveSectionToGap(this.store.doc.slides, movedSectionId, at) : null)
+        : moveSlidesToGap(this.store.doc.slides, this.slideDragIds(ev), at, sectionId)
       if (!next) return
       ev.preventDefault()
       ev.stopPropagation()
-      this.finishSlideDrag()
-      this.store.commit(() => { this.store.doc.slides = next }, 'slides')
+      this.finishSidebarDrag()
+      this.store.commit(() => {
+        this.store.doc.slides = next
+        pruneSections(this.store.doc)
+      }, 'slides')
     })
   }
 
@@ -1822,24 +2064,36 @@ export class Editor {
     }
   }
 
-  private finishSlideDrag() {
+  private sectionDragId(ev: DragEvent): string | null {
+    return this.draggedSectionId || ev.dataTransfer?.getData('text/bento-section') || null
+  }
+
+  private finishSidebarDrag() {
     this.draggedSlideIds = null
-    this.sidebar.classList.remove('ed-dragging')
-    this.sidebar.querySelectorAll('.drop-state, .drop-sort, .drag-source').forEach((node) => {
-      node.classList.remove('drop-state', 'drop-sort', 'drag-source')
+    this.draggedSectionId = null
+    this.sidebar.classList.remove('ed-dragging', 'ed-dragging-section')
+    this.sidebar.querySelectorAll('.drop-state, .drop-sort, .drop-section, .drag-source').forEach((node) => {
+      node.classList.remove('drop-state', 'drop-sort', 'drop-section', 'drag-source')
     })
     window.setTimeout(() => { this.suppressThumbClick = false })
   }
 
   private highlightSidebar() {
     let active: HTMLElement | undefined
-    const activeId = this.store.doc.slides[this.store.currentIndex]?.id
+    const activeSlide = this.store.doc.slides[this.store.currentIndex]
+    const activeId = activeSlide?.id
+    const activeRoot = activeSlide && rootSlideFor(this.store.doc.slides, activeSlide.id)
+    const activeSectionId = activeRoot?.sectionId
     const selected = new Set(this.store.selectedSlideIds)
+    const selectedSections = new Set(this.store.selectedSlideIds
+      .map((id) => sectionIdForSlide(this.store.doc.slides, id))
+      .filter((id): id is string => !!id))
     this.sidebar.querySelectorAll<HTMLElement>('.ed-thumb').forEach((n) => {
       const id = n.dataset.slideId
       const isActive = id === activeId
       const isSelected = !!id && selected.has(id)
       n.classList.toggle('active', isActive)
+      n.classList.toggle('contains-active', !!activeSlide?.stateOf && id === activeRoot?.id)
       n.classList.toggle('selected', isSelected)
       n.classList.toggle('drag-source', !!this.draggedSlideIds && isSelected)
       n.setAttribute('aria-selected', String(isSelected))
@@ -1847,14 +2101,22 @@ export class Editor {
       else n.removeAttribute('aria-current')
       if (isActive) active = n
     })
+    this.sidebar.querySelectorAll<HTMLElement>('.ed-slide-section').forEach((header) => {
+      const id = header.dataset.sectionId
+      const hasActive = !!id && id === activeSectionId
+      header.classList.toggle('has-active', hasActive)
+      header.classList.toggle('has-selection', !!id && selectedSections.has(id))
+      header.classList.toggle('drag-source', !!this.draggedSectionId && id === this.draggedSectionId)
+      if (hasActive && !active) active = header
+    })
     active?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   }
 
   private scheduleThumbs() {
     clearTimeout(this.thumbTimer)
     this.thumbTimer = window.setTimeout(() => {
+      if (this.outlineSignature !== this.currentOutlineSignature()) return this.rebuildSidebar()
       const thumbs = this.sidebar.querySelectorAll<HTMLElement>('.ed-thumb')
-      if (thumbs.length !== this.store.doc.slides.length) return this.rebuildSidebar()
       const base = Math.max(96, this.panelW.left - 52)
       thumbs.forEach((item) => {
         const slide = this.store.doc.slides[Number(item.dataset.index)]
@@ -1880,12 +2142,15 @@ export class Editor {
   private duplicateSlide(i: number) {
     // Duplicated slides keep element ids → set transition to morph and you
     // get PowerPoint-Morph behaviour for free.
-    const clone = JSON.parse(JSON.stringify(this.store.doc.slides[i]))
+    const source = this.store.doc.slides[i]
+    const clone = JSON.parse(JSON.stringify(source))
     clone.id = uid('slide')
+    let at = i + 1
+    if (!source.stateOf) while (this.store.doc.slides[at]?.stateOf === source.id) at++
     this.store.commit(() => {
-      this.store.doc.slides.splice(i + 1, 0, clone)
+      this.store.doc.slides.splice(at, 0, clone)
     }, 'slides')
-    this.store.goTo(i + 1)
+    this.store.goTo(at)
   }
 
   private deleteSlide(i: number) {
@@ -1921,6 +2186,7 @@ export class Editor {
           if (el.link && doomedIds.has(el.link)) delete el.link
         }
       }
+      pruneSections(this.store.doc)
     }, 'slides')
   }
 
@@ -2139,8 +2405,9 @@ export class Editor {
       if (clip?.kind === 'slides') {
         ev.preventDefault()
         const at = this.store.currentIndex + 1
+        const sectionId = sectionIdForSlide(this.store.doc.slides, this.store.slide.id)
         let made: Slide[] = []
-        this.store.commit(() => { made = insertSlides(clip, this.store.doc, at) }, 'slides')
+        this.store.commit(() => { made = insertSlides(clip, this.store.doc, at, sectionId) }, 'slides')
         if (clip.fonts?.length) injectFonts(this.store.doc)
         this.rebuildSidebar()
         this.store.goTo(at)

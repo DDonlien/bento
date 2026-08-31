@@ -337,7 +337,14 @@ names provisional.
   Shift-click selects an inclusive range (separate from the current canvas slide):
   dropping the selection on a root gap reorders it, while dropping it on an ordinary
   slide makes the moved slides states of that target. A moved parent carries its
-  states; a state dropped on a root gap is promoted to an ordinary slide.
+  states; a state dropped on a root gap is promoted to an ordinary slide. A parent's
+  state family has an editor-only disclosure control in the sidebar; collapsed ids
+  never enter the document or undo history.
+- **Outline sections**: optional `doc.sections[]` names groups and ordinary slides
+  carry `sectionId`; state slides inherit their parent's section and never carry a
+  separate membership. Sections organise authoring only — presentation order remains
+  `slides[]`. Sidebar headers collapse locally, accept slide drops, and drag whole
+  sections as blocks. Gaps inside a section both reorder and assign membership.
 - **Layouts**: `doc.layouts` (Slide-shaped templates) + built-ins in model.ts.
   Instantiating KEEPS element ids — slides from the same layout share ids, so
   their chrome morphs across transitions (and re-apply-by-lineage stays
@@ -582,7 +589,8 @@ names provisional.
   chars (NBSP, ZWSP, U+E000) — they don't survive retyping; edit that file
   with line-targeted scripts, not copy-typed strings.
   Sidebar has hover insert-gaps between thumbnails (never between a parent and
-  its states). Selecto's continue-select list is synced in syncTargets — stale
+  its states), plus named section headers and local-only disclosure for sections
+  and state families. Selecto's continue-select list is synced in syncTargets — stale
   cross-slide shift-click selections were a real bug.
 
 ## Hard-won details — do not regress

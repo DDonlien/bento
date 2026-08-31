@@ -353,7 +353,92 @@ a.ed-btn { text-decoration: none; }  /* the update block's "What's new" link is 
 
 .bento-thumb-surface { overflow: hidden; pointer-events: none; }
 
-.ed-add-slide { border: 1.5px dashed var(--line); justify-content: center; color: var(--muted); align-self: stretch; }
+.ed-sidebar-actions { width: 100%; display: grid; gap: 6px; }
+.ed-add-slide, .ed-add-section {
+  width: 100%;
+  border: 1.5px dashed var(--line);
+  justify-content: center;
+  color: var(--muted);
+}
+.ed-add-section { border-style: solid; background: color-mix(in srgb, var(--chip) 72%, transparent); }
+
+/* Authoring-only outline sections. Membership is document data; disclosure is
+   not. The whole row is a drag handle, while its small controls stop the drag. */
+.ed-slide-section {
+  position: relative;
+  width: 100%;
+  min-height: 32px;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 6px 5px 3px;
+  border: 1px solid transparent;
+  border-inline-start: 3px solid var(--line);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--chip) 68%, transparent);
+  color: var(--ink-2);
+  cursor: grab;
+  flex: none;
+}
+.ed-slide-section:active { cursor: grabbing; }
+.ed-slide-section:hover { background: var(--chip); }
+.ed-slide-section.has-active { border-inline-start-color: var(--accent); }
+.ed-slide-section.has-selection { border-color: color-mix(in srgb, var(--blue) 42%, transparent); }
+.ed-slide-section.drag-source { opacity: 0.48; }
+.ed-section-toggle {
+  width: 20px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.ed-section-toggle:hover { background: color-mix(in srgb, var(--blue) 12%, transparent); }
+.ed-section-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: .015em;
+}
+.ed-section-count { font-size: 9px; color: var(--muted); white-space: nowrap; }
+.ed-section-tools {
+  position: absolute;
+  inset-inline-end: 3px;
+  top: 3px;
+  display: none;
+  gap: 2px;
+  padding: 1px;
+  border-radius: 5px;
+  background: var(--chip);
+}
+.ed-slide-section:hover .ed-section-tools { display: flex; }
+.ed-slide-section:hover .ed-section-count { visibility: hidden; }
+.ed-section-tools .ed-btn { min-width: 24px; padding: 3px 4px; justify-content: center; }
+.ed-slide-section.drop-section {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 28%, transparent);
+}
+.ed-slide-section.drop-section::after {
+  content: attr(data-drop-label);
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  color: #fff;
+  background: color-mix(in srgb, var(--blue) 84%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+  pointer-events: none;
+}
 
 /* interactive-state thumbs: slightly smaller, centred under their parent.
    No explicit width — the box sizes to its rendered surface (like normal
@@ -364,6 +449,7 @@ a.ed-btn { text-decoration: none; }  /* the update block's "What's new" link is 
   border-style: dashed;
 }
 .ed-thumb-state:hover, .ed-thumb-state.active, .ed-thumb-state.selected { opacity: 1; }
+.ed-thumb.contains-active { border-color: color-mix(in srgb, var(--accent) 72%, var(--line)); }
 .ed-thumb-state .ed-thumb-num {
   font-size: 9px;
   max-width: 96px;
@@ -371,6 +457,26 @@ a.ed-btn { text-decoration: none; }  /* the update block's "What's new" link is 
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.ed-state-toggle {
+  position: absolute;
+  inset-inline-start: 4px;
+  bottom: 4px;
+  z-index: 3;
+  max-width: calc(100% - 34px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid color-mix(in srgb, var(--line) 74%, transparent);
+  border-radius: 999px;
+  padding: 2px 6px;
+  background: color-mix(in srgb, var(--chip) 92%, transparent);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 9px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.ed-state-toggle:hover { border-color: var(--blue); color: var(--ink); }
 
 .ed-btn-block {
   width: 100%;

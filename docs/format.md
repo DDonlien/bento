@@ -65,6 +65,7 @@ the string `</script>` can never appear and terminate the block.
 | `assets?` | `Record<string,string>` | no | Shared blobs (raw SVG markup or `data:` URIs), referenced by key as `"asset:<key>"`. |
 | `fonts?` | `Array<{ family, asset, weight?, style? }>` | no | Embedded `@font-face`s injected at boot; `asset` is a key into `assets` (a woff2 data URI). |
 | `layouts?` | `Slide[]` | no | Slide-shaped templates (see [Layouts](#layouts)). Absent = the built-in starter layouts are offered. |
+| `sections?` | `Array<{ id, name }>` | no | Named editor-outline groups. Membership is carried by root slides' `sectionId`; sections do not affect presentation. |
 | `collab?` | `Collab` | no | Live-collaboration credentials + CRDT state (see [Collaboration fields](#collaboration-fields)). |
 | `template?` | `boolean` | no | Template file: every open mints a fresh `docId` and drops `collab` (see [File modes](#file-modes)). |
 | `readonly?` | `boolean` | no | Player file: boots straight into the presentation, no editor. |
@@ -92,6 +93,7 @@ the string `</script>` can never appear and terminate the block.
 | `elements` | `SlideElement[]` | yes | **Array order = paint order (z).** First element is at the back. |
 | `notes` | `string` | yes | Speaker notes (travel in the file; shown in speaker view). |
 | `name?` | `string` | no | Friendly label for link pickers / state badges. |
+| `sectionId?` | `string` | no | Editor-outline section membership for an ordinary/root slide. State slides inherit their parent's section. |
 | `stateOf?` | `string` | no | Marks this slide a hidden *state* variant of the slide with this id (see [Interactive states](#interactive-states)). |
 | `hover?` | `{ type, dim?, default? }` | no | Present-mode hover behaviour: `type: 'focus-group'` (dim elements outside the hovered group) or `'reveal'` (`showOnHover` set swap; `default` names the resting set). |
 | `comments?` | `Comment[]` | no | Review threads. Editor-only — never rendered in present/print, but saved in the file. |
@@ -253,6 +255,21 @@ All `fx` behaviour runs in **present mode only**.
 
 ---
 
+## Sections
+
+`doc.sections` defines names; ordinary slides refer to one with `sectionId`.
+Section order is derived from the first root slide using each id, so `slides[]`
+remains the single presentation-order authority. Sections are authoring
+organisation only: they do not change navigation, numbering, links, PDF export,
+or slideshow output.
+
+The sidebar can collapse a section and drag its header to move all member slide
+families together. Disclosure state is viewer/editor state and is never written
+to the document. Removing a section clears its slides' `sectionId` but leaves
+the slides in place.
+
+---
+
 ## Interactive states
 
 A slide with `stateOf: "<parent-id>"` is a hidden variant of its parent:
@@ -263,9 +280,10 @@ A slide with `stateOf: "<parent-id>"` is a hidden variant of its parent:
 - If it shares element ids with its parent (or a sibling state) and the
   transition is `morph`, the matched elements glide between the two.
 
-State slides live adjacent to their parent in `slides[]` and render nested in
-the editor sidebar. A clickable trigger should be a padded transparent hit
-rect, not the label text itself.
+State slides live adjacent to their parent in `slides[]`, inherit the parent's
+section without carrying their own `sectionId`, and render nested/collapsible in
+the editor sidebar. A clickable trigger should be a padded transparent hit rect,
+not the label text itself.
 
 ---
 

@@ -11,6 +11,14 @@ pre-1.0.
 
 ## [Unreleased]
 
+- **Sections and a collapsible slide outline.** The slide list can now group
+  pages under named section headers, collapse either a whole section or one
+  slide's interactive states, and drag a section as a single block. Shift-select
+  several slides and the same drag has three explicit meanings: a gap reorders
+  them (and adopts that section), a section header moves them into the group,
+  and a slide card makes them interactive states of that slide. Collapsing is a
+  local view preference and never changes or dirties the deck.
+
 - **Code on a slide — and it morphs.** A slide can hold a code snippet, syntax
   highlighted, and when the same snippet appears on two slides in a row the code
   *travels* between them. A line that moved moves; a call that changed position

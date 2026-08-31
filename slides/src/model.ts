@@ -355,6 +355,17 @@ export interface Comment {
   replies?: Array<{ id: string; author: string; text: string; at: string }>
 }
 
+/**
+ * Editor outline group. Sections organise the linear slide list but never
+ * change presentation, numbering, export, or link behaviour. Their order is
+ * derived from the first root slide that references each id, so moving slides
+ * is the one source of truth for both the outline and the show.
+ */
+export interface SlideSection {
+  id: string
+  name: string
+}
+
 export interface Slide {
   id: string
   background: string
@@ -366,6 +377,12 @@ export interface Slide {
 
   /** optional friendly name (link pickers, state badges) */
   name?: string
+  /**
+   * Editor outline section. Only ordinary/root slides carry this field;
+   * interactive states inherit their parent's section through `stateOf`.
+   * Sections organise authoring only and do not affect presentation.
+   */
+  sectionId?: string
   /**
    * Interactive state: this slide is a variant of the slide with the given
    * id. It is hidden from linear navigation — reachable only via element
@@ -510,6 +527,13 @@ export interface BentoDoc {
    * When absent, the editor offers its built-in starter layouts.
    */
   layouts?: Slide[]
+  /**
+   * Named editor-outline groups. Membership lives on root slides through
+   * `sectionId`; array order is metadata only, while slide order remains the
+   * presentation order. Optional and additive, so every existing deck opens
+   * unchanged with an unsectioned outline.
+   */
+  sections?: SlideSection[]
   /**
    * Live-collaboration credentials (bento-sync), minted AT CREATION so any
    * copy of the file can join once sharing is turned on ("send the file
@@ -1045,7 +1069,7 @@ export function builtinLayouts(size?: { width: number; height: number }): Slide[
 /** A fresh slide from a layout — new slide id, element ids KEPT (lineage). */
 export function instantiateLayout(layout: Slide): Slide {
   const copy: Slide = JSON.parse(JSON.stringify(layout))
-  return { ...copy, id: uid('slide'), name: undefined, stateOf: undefined, notes: '' }
+  return { ...copy, id: uid('slide'), name: undefined, sectionId: undefined, stateOf: undefined, notes: '' }
 }
 
 const textHasContent = (e: SlideElement) =>

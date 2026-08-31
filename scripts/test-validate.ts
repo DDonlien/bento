@@ -65,6 +65,28 @@ const cleanResult = validateDoc(clean, { measure: false })
 ok(cleanResult.findings.length === 0,
   `a clean deck produces no findings at all (got ${cleanResult.findings.length}: ${cleanResult.findings.map((f) => f.code).join(', ')})`)
 
+const sectioned = JSON.parse(JSON.stringify(clean)) as BentoDoc
+sectioned.sections = [{ id: 'intro', name: 'Introduction' }]
+sectioned.slides[0].sectionId = 'intro'
+const sectionedResult = validateDoc(sectioned, { measure: false })
+ok(!sectionedResult.findings.some((f) => f.code === 'unknown-key'),
+  'section metadata and slide membership are known format fields')
+
+const brokenSections = JSON.parse(JSON.stringify(sectioned)) as BentoDoc
+brokenSections.sections = [
+  { id: 'dup', name: 'One' },
+  { id: 'dup', name: '' },
+]
+brokenSections.slides[0].sectionId = 'missing'
+const brokenSectionCodes = new Set(validateDoc(brokenSections, { measure: false }).findings.map((f) => f.code))
+for (const expected of ['duplicate-section-id', 'bad-section-name', 'broken-section']) {
+  ok(brokenSectionCodes.has(expected), `malformed section metadata trips ${expected}`)
+}
+const wrongSectionShape = JSON.parse(JSON.stringify(clean)) as BentoDoc
+;(wrongSectionShape as any).sections = { intro: 'not an array' }
+ok(validateDoc(wrongSectionShape, { measure: false }).findings.some((f) => f.code === 'bad-sections'),
+  'a non-array sections value is reported without making validation throw')
+
 // --------------------------------------------------------------- broken deck
 const broken: BentoDoc = {
   ...clean,

@@ -94,6 +94,7 @@ const ELEMENTS = {
 
 const tables = {
   doc: uniq(keysOf('BentoDoc')),
+  section: uniq(keysOf('SlideSection')),
   slide: uniq(keysOf('Slide')),
   comment: uniq(keysOf('Comment')),
   element: Object.fromEntries(

@@ -151,6 +151,59 @@ export function validateDoc(doc: BentoDoc, opts: ValidateOpts = {}): ValidateRes
         message: `Document key "${k}" is not part of the bento/slides format — it is ignored at render time.` })
     }
   }
+  const sectionList = Array.isArray(doc.sections) ? doc.sections : []
+  if (doc.sections != null && !Array.isArray(doc.sections)) {
+    add({ code: 'bad-sections', severity: 'error', path: 'sections',
+      message: 'doc.sections must be an array of {id, name} objects.' })
+  }
+  const sectionIds = new Set<string>()
+  for (const [index, section] of sectionList.entries()) {
+    if (!section || typeof section !== 'object') {
+      add({ code: 'bad-section', severity: 'error', path: `sections[${index}]`,
+        message: 'A section entry must be an object with id and name.' })
+      continue
+    }
+    const path = `sections[${index}]`
+    for (const k of Object.keys(section)) {
+      if (!(MODEL_KEYS.section as readonly string[]).includes(k)) {
+        add({ code: 'unknown-key', severity: 'warning', path: `${path}.${k}`,
+          message: `Section key "${k}" is not part of the format — it is ignored.` })
+      }
+    }
+    if (typeof section.id !== 'string' || !section.id) {
+      add({ code: 'bad-section-id', severity: 'error', path: `${path}.id`,
+        message: 'A section needs a non-empty string id so slides can refer to it.' })
+    } else if (sectionIds.has(section.id)) {
+      add({ code: 'duplicate-section-id', severity: 'error', path: `${path}.id`,
+        message: `Two sections share the id "${section.id}" — a slide cannot tell which name it belongs under.` })
+    } else {
+      sectionIds.add(section.id)
+    }
+    if (typeof section.name !== 'string' || !section.name.trim()) {
+      add({ code: 'bad-section-name', severity: 'warning', path: `${path}.name`,
+        message: 'A section has no readable name — the sidebar will show it as untitled.' })
+    }
+  }
+  const usedSectionIds = new Set(doc.slides.filter((slide) => !slide.stateOf && slide.sectionId).map((slide) => slide.sectionId!))
+  for (const section of sectionList) {
+    if (section.id && !usedSectionIds.has(section.id)) {
+      add({ code: 'empty-section', severity: 'info', path: `sections.${section.id}`,
+        message: `Section "${section.name || section.id}" has no slides, so it does not appear in the sidebar.` })
+    }
+  }
+  const seenSectionRuns = new Set<string>()
+  let previousSectionId: string | undefined
+  for (const slide of doc.slides) {
+    if (slide.stateOf) continue
+    if (slide.sectionId !== previousSectionId) {
+      if (slide.sectionId && seenSectionRuns.has(slide.sectionId)) {
+        add({ code: 'split-section', severity: 'warning', slide: slide.id, path: 'sectionId',
+          message: `Section "${slide.sectionId}" occurs in more than one disconnected run — move its slides together so the outline has one header.` })
+      }
+      if (slide.sectionId) seenSectionRuns.add(slide.sectionId)
+      previousSectionId = slide.sectionId
+    }
+  }
   for (const f of doc.fonts ?? []) {
     if (f.asset && !assets[f.asset]) {
       add({ code: 'missing-asset', severity: 'error', path: `fonts.${f.family}`,
@@ -246,6 +299,13 @@ export function validateDoc(doc: BentoDoc, opts: ValidateOpts = {}): ValidateRes
     if (slide.stateOf && !slideIds.has(slide.stateOf)) {
       add({ code: 'broken-state-parent', severity: 'error', slide: sid, path: 'stateOf',
         message: `stateOf points at "${slide.stateOf}", which is not a slide in this deck — the state is unreachable.` })
+    }
+    if (slide.stateOf && slide.sectionId) {
+      add({ code: 'state-section-override', severity: 'warning', slide: sid, path: 'sectionId',
+        message: 'An interactive state inherits its parent\'s section; its own sectionId is ignored and should be removed.' })
+    } else if (slide.sectionId && !sectionIds.has(slide.sectionId)) {
+      add({ code: 'broken-section', severity: 'warning', slide: sid, path: 'sectionId',
+        message: `sectionId points at "${slide.sectionId}", which is not declared in doc.sections — the sidebar will show an untitled fallback group.` })
     }
 
     for (const el of slide.elements) {
