@@ -34,7 +34,7 @@ import { onlineTransport, startSharing, stopSharing } from './sync/online'
 configureApp({
   appId: 'bento-slides',
   appName: 'bento/slides',
-  manifestUrl: 'https://bento.page/releases/slides/manifest.json',
+  manifestUrl: 'https://ddonlien.github.io/bento/releases/slides/manifest.json',
 })
 
 // Every save writes a static rendering of page one into the shell, so file

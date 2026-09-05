@@ -17,8 +17,8 @@
 // breaks exactly one link and asserts the refusal, plus a good-path case so
 // the suite cannot pass by refusing everything.
 //
-// THE KEY. Verification runs against the real PUBLIC_KEY_JWK baked into
-// kernel/src/update.ts, whose private half lives offline with the maintainer
+// THE KEY. Verification runs against the real UPSTREAM_PUBLIC_KEY_JWK baked
+// into kernel/src/update.ts, whose private half lives with the official publisher
 // and is never available here (nor should it be). So the harness swaps the
 // TRUST ROOT for a throwaway keypair generated in-process — crypto.subtle
 // .importKey hands back the test public key instead of the shipped one. That
@@ -69,7 +69,7 @@ Object.defineProperty(globalThis, 'localStorage', {
 })
 
 // Swap ONLY the trust root: any EC JWK import (there is exactly one call site,
-// verifySigned's) resolves to the test public key. Everything else passes
+// verifyOfficialSigned's) resolves to the test public key. Everything else passes
 // through to real WebCrypto.
 Object.defineProperty(globalThis, 'crypto', {
   configurable: true,

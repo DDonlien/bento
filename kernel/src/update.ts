@@ -60,6 +60,18 @@ export const updateManifestUrl = (): string => appConfig().manifestUrl
 const PUBLIC_KEY_JWK = {
   kty: 'EC',
   crv: 'P-256',
+  x: '6PoXFwAUWQzNEmjV9t0BhCN2oX-C-WvwIGvkOZmrTVU',
+  y: 'OZ3TIvn-M8QcvOOi1XOT9pudmY2ln6eE77Z1LKOrobA',
+} as const
+
+// The fork continues to consume optional language packs from bento.page.
+// Keep that official channel's trust root separate from this fork's release
+// key: changing who may publish an app shell must not silently disable packs,
+// and accepting the official key for app updates would defeat the fork-owned
+// update channel above.
+const UPSTREAM_PUBLIC_KEY_JWK = {
+  kty: 'EC',
+  crv: 'P-256',
   x: 'GMHSKwWcAoJVq-Dz1ZxWZM6TXATWIKbaQBpjoTystH8',
   y: 'flFNzbdXCmJN8RQYCeG71rBZnnbN-MCEnp1EbCLFrj0',
 } as const
@@ -110,18 +122,18 @@ export function compareVersions(a: string, b: string): number {
  * covers the payload's exact UTF-8 bytes — no JSON canonicalization involved,
  * which is why the payload travels as a string rather than as an object.
  *
- * This is the ONLY place in the kernel that does release-channel crypto.
- * Anything else the channel serves — the release manifest, the language-pack
- * index (slides/src/packs.ts) — verifies through here against the SAME
- * embedded key, then applies its own shape checks to the payload. One trust
- * root, one code path: a second implementation is a second thing to get
- * wrong, and a signature check that is subtly wrong looks exactly like one
- * that is right.
+ * This is the ONLY implementation of signed-envelope crypto in the kernel.
+ * The fork's release manifest and the official language-pack index both use
+ * this implementation, but deliberately pass different embedded trust roots.
  *
  * Throws on anything short of a good signature. `what` only names the thing
  * in those messages.
  */
-export async function verifySigned(raw: string, what = 'signed file'): Promise<unknown> {
+async function verifySignedWithKey(
+  raw: string,
+  what: string,
+  publicKey: JsonWebKey,
+): Promise<unknown> {
   let payload: string, sig: string
   try {
     ;({ payload, sig } = JSON.parse(raw))
@@ -132,7 +144,7 @@ export async function verifySigned(raw: string, what = 'signed file'): Promise<u
     throw new Error(`the ${what} is malformed`)
 
   const key = await crypto.subtle.importKey(
-    'jwk', PUBLIC_KEY_JWK as JsonWebKey,
+    'jwk', publicKey,
     { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'],
   )
   const ok = await crypto.subtle.verify(
@@ -147,6 +159,14 @@ export async function verifySigned(raw: string, what = 'signed file'): Promise<u
     throw new Error(`the ${what} payload is not valid JSON`)
   }
 }
+
+/** Verify something published by this fork's app-update channel. */
+export const verifySigned = (raw: string, what = 'signed file'): Promise<unknown> =>
+  verifySignedWithKey(raw, what, PUBLIC_KEY_JWK as JsonWebKey)
+
+/** Verify data retained from the official bento.page content channel. */
+export const verifyOfficialSigned = (raw: string, what = 'signed file'): Promise<unknown> =>
+  verifySignedWithKey(raw, what, UPSTREAM_PUBLIC_KEY_JWK as JsonWebKey)
 
 /** Lowercase hex sha256 of some bytes — the digest form every pin uses. */
 const sha256Hex = async (bytes: BufferSource): Promise<string> =>

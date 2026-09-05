@@ -102,12 +102,12 @@ const threw = async (fn: () => Promise<unknown>): Promise<string> => {
   const kernel = readFileSync(new URL('../kernel/src/update.ts', import.meta.url), 'utf8')
   // From the declaration onward, and `\b` on the coordinate names — `kty: 'EC'`
   // ends in `y:` and matches a lazy pattern, which reads as a key mismatch.
-  const block = kernel.slice(kernel.indexOf('PUBLIC_KEY_JWK'))
+  const block = kernel.slice(kernel.indexOf('UPSTREAM_PUBLIC_KEY_JWK'))
   const x = block.match(/\bx:\s*'([A-Za-z0-9_-]+)'/)?.[1]
   const y = block.match(/\by:\s*'([A-Za-z0-9_-]+)'/)?.[1]
   ok(!!x && x === RELEASE_KEY.x && y === RELEASE_KEY.y,
-    "the extension's key is byte-identical to the kernel's — the extension mirrors "
-    + 'kernel/src/update.ts because it cannot import it, and a mirror drifts silently')
+    "the extension's official key is byte-identical to the kernel's upstream key — "
+    + 'the extension stays on bento.page while this fork owns its slides update channel')
 }
 
 // ---- 2. what verification refuses -------------------------------------------

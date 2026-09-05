@@ -21,7 +21,7 @@
 import { appConfig } from '../../kernel/src/app.ts'
 import { addPack, removePack, type LanguagePack } from '../../kernel/src/i18n.ts'
 import { readShellBlocks, type ShellBlock } from '../../kernel/src/save.ts'
-import { fetchPinned, verifySigned } from '../../kernel/src/update.ts'
+import { fetchPinned, verifyOfficialSigned } from '../../kernel/src/update.ts'
 import { netFetch } from '../../kernel/src/net.ts'
 // Extension-explicit like the kernel imports above, so this module also loads
 // under plain node — scripts/test-packs.ts exercises the real thing.
@@ -201,11 +201,11 @@ export function shellBlocksForPacks(): ShellBlock[] {
  * NOT PROPERLY SIGNED.
  *
  * The index is a signed envelope — `{payload, sig}`, ECDSA P-256 over the
- * payload's bytes, verified against the release key already embedded in this
- * shell (kernel verifySigned). It is the whole trust anchor for packs: every
+ * payload's bytes, verified against the official bento.page key retained in
+ * this shell (kernel verifyOfficialSigned). It is the whole trust anchor for packs: every
  * listing pins its pack's sha256, so signing the index signs the hashes, and
  * a fetched pack is checked against its pinned hash. Same shape as the update
- * manifest, same key, no second trust root.
+ * manifest, but a distinct trust root from this fork's app-update channel.
  *
  * FAIL CLOSED, no legacy path. An unsigned or badly signed index yields NO
  * listings — the Languages dialog then says there is nothing to add, which is
@@ -230,7 +230,7 @@ async function fetchIndex(): Promise<PackListing[]> {
   try {
     const res = await netFetch(`${channel()}/packs.json`, { cache: 'no-store' })
     if (!res.ok) return []
-    const payload = (await verifySigned(await res.text(), 'language pack index')) as {
+    const payload = (await verifyOfficialSigned(await res.text(), 'language pack index')) as {
       app?: unknown
       packs?: unknown
     }
